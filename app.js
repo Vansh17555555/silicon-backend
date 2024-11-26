@@ -231,51 +231,65 @@ async function analyzeReflection(content) {
       };
     }
   }
-
   async function generatePersonalizedPrompt(user, recentReflections) {
     try {
-      // Log the user preferences to debug
-      console.log('User Preferences:', user.preferences);
-  
-      // Ensure aiSettings exists, set defaults if missing
-      let aiSettings = user.preferences?.aiSettings;
-      if (!aiSettings) {
-        console.log('No aiSettings found for user, setting defaults...');
-        aiSettings = {
-          insightFrequency: 'always',  // Default value
-          preferredTone: 'encouraging',  // Default value
+        // Validate user input
+        if (!user || !recentReflections) {
+            console.error('Missing required parameters for personalized prompt');
+            return null;
+        }
+
+        // Ensure recentReflections is an array
+        if (!Array.isArray(recentReflections)) {
+            console.error('recentReflections is not an array:', recentReflections);
+            recentReflections = [recentReflections]; // Wrap in an array if it's not an array
+        }
+      
+        // Use genAI.getGenerativeModel to retrieve the appropriate model
+        const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+
+        // Prepare the prompt with more structured context
+        const prompt = `Generate a personalized reflection prompt that:
+        1. Considers the user's growth profile
+        2. Builds upon recent reflections 
+        3. Aligns with the user's preferred tone
+        4. Encourages further personal development
+
+        User Growth Profile: ${JSON.stringify(user.growthProfile || {})}
+        Recent Reflection Topics: ${recentReflections.map(r => 
+            r.topics?.join(', ') || 'No specific topics'
+        ).join('; ')}
+        Preferred Tone: ${user.preferences?.aiSettings?.preferredTone || 'encouraging'}
+
+        Provide a thought-provoking prompt that:
+        - Relates to past reflections
+        - Explores potential areas of growth
+        - Encourages deeper self-understanding
+
+        Format: A single, engaging reflection question or prompt.`;
+
+        // Generate the content
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        const promptContent = response.text().trim();
+
+        // Prepare future delivery details
+        const deliveryDate = new Date();
+        deliveryDate.setDate(deliveryDate.getDate() + 7);  // Set future delivery date
+
+        return {
+            content: promptContent,
+            deliveryDate: deliveryDate,
+            isDelivered: false
         };
-      }
-  
-      // Generate the AI prompt
-      const response = await openai.chat.completions.create({
-        model: "gpt-4",
-        messages: [{
-          role: "system",
-          content: "Generate a personalized reflection prompt based on the user's profile and recent reflections."
-        }, {
-          role: "user",
-          content: JSON.stringify({
-            userProfile: user.growthProfile,
-            recentReflections: recentReflections,
-            preferredTone: aiSettings.preferredTone,  // Use preferredTone from aiSettings
-          })
-        }],
-      });
-  
-      const prompt = response.choices[0].message.content;
-      const deliveryDate = new Date();
-      deliveryDate.setDate(deliveryDate.getDate() + 7);  // Set future delivery date
-  
-      return {
-        content: prompt,
-        deliveryDate,
-      };
+
     } catch (error) {
-      console.error('Error generating prompt:', error);
-      return null;
+        console.error('Error generating personalized prompt:', error);
+        return null;
     }
-  }
+}
+  
+
   async function provideMilestoneRecommendations(milestone) {
     try {
       const model = genAI.getGenerativeModel({ model: "gemini-pro" });
@@ -326,13 +340,11 @@ app.post('/api/reflections', async (req, res) => {
 
     const analysis = await analyzeReflection(content);
     
-
-    const recentReflections = await Reflection.find({ userId })
-      .sort({ timestamp: -1 })
-      .limit(5);
-    
+    console.log(analysis)
+    const recentReflections =analysis
+   
     const futurePrompt = await generatePersonalizedPrompt(userId, recentReflections);
-
+    console.log(futurePrompt)
     const reflection = new Reflection({
       content,
       path,
@@ -342,13 +354,14 @@ app.post('/api/reflections', async (req, res) => {
       analysis,
       futurePrompt,
     });
-
+    console.log(reflection)
     await reflection.save();
     res.status(201).json(reflection);
   } catch (error) {
     console.error('Error in /api/reflections:', error);
     res.status(500).json({ error: error.message });
   }
+  
 });
 
 // Get all reflections for a user
